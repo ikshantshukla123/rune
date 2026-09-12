@@ -18,6 +18,7 @@ package vi
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -1139,6 +1140,54 @@ func TestVisualBlockDeleteThenPaste(t *testing.T) {
 				require.True(t, handled)
 				assert.Equal(t, tc.wantBuffer, buf.String())
 			}
+		})
+	}
+}
+
+type errClip struct {
+	data      clipboard.Data
+	failPaste bool
+	failCopy  bool
+}
+
+func (m *errClip) Paste(registerID string) (clipboard.Data, error) {
+	if m.failPaste {
+		return clipboard.Data{}, errors.New("paste failed")
+	}
+	return m.data, nil
+}
+
+func (m *errClip) Copy(registerID string, data clipboard.Data) error {
+	if m.failCopy {
+		return errors.New("copy failed")
+	}
+	m.data = data
+	return nil
+}
+
+func TestVisualBlockDeleteClipboardError(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		failPaste bool
+		failCopy  bool
+	}{
+		{"read failure skips the restore", true, false},
+		{"write failure is logged", false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			buf := cell.NewBuffer()
+			_, err := buf.ReadFrom(strings.NewReader("abcd\nefgh\nijkl"))
+			require.NoError(t, err)
+			clip := &errClip{failPaste: tc.failPaste, failCopy: tc.failCopy}
+			vi := New(buf, uri, WithClipboard(registerset.New(clip)))
+			vi.Resize(80, 24)
+
+			quit, handled := vi.Handle(term.Event{Type: term.EventKey, Mod: term.ModCtrl, Ch: 'v'})
+			require.False(t, quit)
+			require.True(t, handled)
+			handleRunes(t, vi, "ljd")
+
+			assert.Equal(t, "cd\ngh\nijkl", buf.String())
 		})
 	}
 }
