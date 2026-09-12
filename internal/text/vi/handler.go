@@ -83,6 +83,7 @@ type viHandler interface {
 	search(string)
 	moveToBounds()
 	unselect() bool
+	copySuppressed() bool
 	setStatusBar(bar statusBar)
 }
 
@@ -134,6 +135,7 @@ type viHandlerImpl struct {
 	pendingInsertRegister bool
 	pendingInsertNormal   bool
 	insertCompletion      insertCompletionState
+	suppressCopyDelete    bool
 }
 
 type statusBar interface {
@@ -1705,6 +1707,10 @@ func (vi *viHandlerImpl) copySelection() {
 	}
 }
 
+func (vi *viHandlerImpl) copySuppressed() bool {
+	return vi.suppressCopyDelete
+}
+
 func (vi *viHandlerImpl) copySelectionForDelete() {
 	reg := vi.consumeActiveRegister()
 	if reg == blackHoleRegister {
@@ -1765,7 +1771,9 @@ func (vi *viHandlerImpl) handleVisualBlockChangeStart() {
 	cursor := vi.cursor.CursorAtScroll()
 	blockFrom, blockTo := term.CoordinatesBlockSort(anchor, cursor)
 	// delete the block first, then enter insert at the left edge
+	vi.suppressCopyDelete = true
 	vi.cursor.DeleteSelection()
+	vi.suppressCopyDelete = false
 	vi.setInsertMode()
 	vi.blockRepeat.From = term.Coordinates{X: blockFrom.X, Y: blockFrom.Y}
 	vi.blockRepeat.To = term.Coordinates{X: blockFrom.X, Y: blockTo.Y}
@@ -1929,25 +1937,11 @@ func (vi *viHandlerImpl) handleVisual(ev term.Event) (quit, handled bool) {
 		case 'd', 'x':
 			mode, modeOk := vi.cursor.SelectionMode()
 			vi.copySelectionForDelete()
-			// A block delete runs one edit per row, each overwriting the
-			// register, so re-assert the copied block once it completes.
-			var saved clipboard.Data
-			restore := modeOk && mode == text.BlockSelection
-			if restore {
-				data, err := vi.readRegister(unnamedRegister)
-				if err != nil {
-					vi.logError(err)
-					restore = false
-				} else {
-					saved = data
-				}
-			}
+			// A block delete runs one edit per row; hold the
+			// copy-on-delete writes so only the copy above lands.
+			vi.suppressCopyDelete = modeOk && mode == text.BlockSelection
 			vi.cursor.DeleteSelection()
-			if restore {
-				if err := vi.writeRegister(unnamedRegister, saved); err != nil {
-					vi.logError(err)
-				}
-			}
+			vi.suppressCopyDelete = false
 			vi.setNormalMode()
 		case 's', 'c':
 			switch vi.mode() {

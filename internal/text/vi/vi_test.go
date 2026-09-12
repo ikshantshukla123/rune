@@ -18,7 +18,6 @@ package vi
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -543,6 +542,10 @@ func (h *mockHandler) setNormalMode() bool {
 }
 
 func (h *mockHandler) unselect() bool {
+	return false
+}
+
+func (h *mockHandler) copySuppressed() bool {
 	return false
 }
 
@@ -1144,52 +1147,23 @@ func TestVisualBlockDeleteThenPaste(t *testing.T) {
 	}
 }
 
-type errClip struct {
-	data      clipboard.Data
-	failPaste bool
-	failCopy  bool
-}
+func TestVisualBlockChangePreservesRegister(t *testing.T) {
+	buf := cell.NewBuffer()
+	_, err := buf.ReadFrom(strings.NewReader("abcd\nefgh\nijkl"))
+	require.NoError(t, err)
+	vi := New(buf, uri, WithClipboard(registerset.New(new(mockClip))))
+	vi.Resize(80, 24)
 
-func (m *errClip) Paste(registerID string) (clipboard.Data, error) {
-	if m.failPaste {
-		return clipboard.Data{}, errors.New("paste failed")
-	}
-	return m.data, nil
-}
+	quit, handled := vi.Handle(term.Event{Type: term.EventKey, Mod: term.ModCtrl, Ch: 'v'})
+	require.False(t, quit)
+	require.True(t, handled)
+	handleRunes(t, vi, "ljc")
 
-func (m *errClip) Copy(registerID string, data clipboard.Data) error {
-	if m.failCopy {
-		return errors.New("copy failed")
-	}
-	m.data = data
-	return nil
-}
-
-func TestVisualBlockDeleteClipboardError(t *testing.T) {
-	for _, tc := range []struct {
-		name      string
-		failPaste bool
-		failCopy  bool
-	}{
-		{"read failure skips the restore", true, false},
-		{"write failure is logged", false, true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			buf := cell.NewBuffer()
-			_, err := buf.ReadFrom(strings.NewReader("abcd\nefgh\nijkl"))
-			require.NoError(t, err)
-			clip := &errClip{failPaste: tc.failPaste, failCopy: tc.failCopy}
-			vi := New(buf, uri, WithClipboard(registerset.New(clip)))
-			vi.Resize(80, 24)
-
-			quit, handled := vi.Handle(term.Event{Type: term.EventKey, Mod: term.ModCtrl, Ch: 'v'})
-			require.False(t, quit)
-			require.True(t, handled)
-			handleRunes(t, vi, "ljd")
-
-			assert.Equal(t, "cd\ngh\nijkl", buf.String())
-		})
-	}
+	assert.Equal(t, insertMode, vi.handler.mode())
+	assert.Equal(t, "cd\ngh\nijkl", buf.String())
+	data, err := vi.Paste(clipboard.DefaultRegisterID)
+	require.NoError(t, err)
+	assert.Equal(t, "", data.Text)
 }
 
 type testFoldsService struct {
