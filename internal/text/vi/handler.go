@@ -1927,8 +1927,27 @@ func (vi *viHandlerImpl) handleVisual(ev term.Event) (quit, handled bool) {
 			vi.joinSelection(vi.cursor.Join)
 			vi.setNormalMode()
 		case 'd', 'x':
+			mode, modeOk := vi.cursor.SelectionMode()
 			vi.copySelectionForDelete()
+			// A block delete runs one edit per row, each overwriting the
+			// register, so re-assert the copied block once it completes.
+			var saved clipboard.Data
+			restore := modeOk && mode == text.BlockSelection
+			if restore {
+				data, err := vi.readRegister(unnamedRegister)
+				if err != nil {
+					vi.logError(err)
+					restore = false
+				} else {
+					saved = data
+				}
+			}
 			vi.cursor.DeleteSelection()
+			if restore {
+				if err := vi.writeRegister(unnamedRegister, saved); err != nil {
+					vi.logError(err)
+				}
+			}
 			vi.setNormalMode()
 		case 's', 'c':
 			switch vi.mode() {
