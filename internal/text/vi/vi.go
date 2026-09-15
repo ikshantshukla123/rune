@@ -317,11 +317,15 @@ func (vi *Vi) Handle(ev term.Event) (quit, handled bool) {
 			case term.EventKey:
 				switch ev.Ch {
 				case '.':
-					handled = vi.repeat()
-					return
+					if ev.Mod == 0 {
+						handled = vi.repeat()
+						return
+					}
 				case 'u':
-					handled = vi.undo()
-					return
+					if ev.Mod == 0 {
+						handled = vi.undo()
+						return
+					}
 				case 'r':
 					if ev.Mod == term.ModCtrl {
 						handled = vi.redo()
